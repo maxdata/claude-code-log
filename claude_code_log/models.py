@@ -4,7 +4,7 @@ Enhanced to leverage official Anthropic types where beneficial.
 """
 
 from typing import Any, List, Union, Optional, Dict, Literal, cast
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from anthropic.types import Message as AnthropicMessage
 from anthropic.types import StopReason
@@ -400,3 +400,21 @@ def parse_transcript_entry(data: Dict[str, Any]) -> TranscriptEntry:
 
     else:
         raise ValueError(f"Unknown transcript entry type: {entry_type}")
+
+
+class Span(BaseModel):
+    """Logical span grouping of messages for higher-level readability.
+
+    This model is not persisted to JSONL; it's a derived structure used for rendering.
+    """
+
+    id: str
+    title: Optional[str] = None
+    kind: Literal["chat", "tooling", "todo", "system", "unknown"] = "unknown"
+    start_index: int
+    end_index: int
+    message_indices: List[int]
+    start_timestamp: Optional[str] = None
+    end_timestamp: Optional[str] = None
+    session_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)

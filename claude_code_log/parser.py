@@ -4,7 +4,7 @@
 import json
 from pathlib import Path
 import re
-from typing import Any, List, Optional, Union, TYPE_CHECKING
+from typing import Any, List, Optional, Union, TYPE_CHECKING, Dict
 from datetime import datetime
 import dateparser
 
@@ -15,6 +15,10 @@ from .models import (
     ContentItem,
     TextContent,
     ThinkingContent,
+    ToolUseContent,
+    ToolResultContent,
+    ImageContent,
+    Span,
 )
 
 if TYPE_CHECKING:
@@ -112,6 +116,161 @@ def filter_messages_by_date(
         filtered_messages.append(message)
 
     return filtered_messages
+
+
+def _has_tool_activity(content: Union[str, List[ContentItem], None]) -> bool:
+    """Detect whether message content includes tool use or tool result or images/thinking."""
+    if not content or isinstance(content, str):
+        return False
+    for item in content:
+        item_type = getattr(item, "type", None)
+        if isinstance(item, (ToolUseContent, ToolResultContent, ThinkingContent, ImageContent)) or item_type in (
+            "tool_use",
+            "tool_result",
+            "thinking",
+            "image",
+        ):
+            return True
+    return False
+
+
+def _contains_todowrite(content: Union[str, List[ContentItem], None]) -> bool:
+    if not content or isinstance(content, str):
+        return False
+    for item in content:
+        if isinstance(item, ToolUseContent) and item.name == "TodoWrite":
+            return True
+        if hasattr(item, "type") and getattr(item, "type") == "tool_use":
+            name = getattr(item, "name", "")
+            if name == "TodoWrite":
+                return True
+    return False
+
+
+def group_messages_into_spans(
+    messages: List[TranscriptEntry], gap_seconds: int = 600
+) -> List[Span]:
+    """Group messages into logical spans using simple, conservative heuristics.
+
+    Heuristics:
+    - New span when session changes
+    - New span when time gap between adjacent messages exceeds gap_seconds
+    - Span kind classification based on presence of TodoWrite/tool activity/system-only
+    - Title derived from first user message text in span, else assistant text
+    """
+    spans: List[Span] = []
+    if not messages:
+        return spans
+
+    # Work on non-summary messages to align with renderer iteration
+    seq = [m for m in messages if not isinstance(m, SummaryTranscriptEntry)]
+    if not seq:
+        return spans
+
+    def get_dt(idx: int) -> Optional[datetime]:
+        m = seq[idx]
+        ts = getattr(m, "timestamp", None)
+        return parse_timestamp(ts) if ts else None
+
+    def start_new_span(start_idx: int) -> Dict[str, Any]:
+        m = seq[start_idx]
+        return {
+            "start_index": start_idx,
+            "end_index": start_idx,
+            "message_indices": [start_idx],
+            "session_id": getattr(m, "sessionId", None),
+            "start_timestamp": getattr(m, "timestamp", None),
+            "end_timestamp": getattr(m, "timestamp", None),
+            "kind": "unknown",
+            "title": None,
+            "has_tooling": False,
+            "has_todo": False,
+            "all_system": True,
+        }
+
+    cur = start_new_span(0)
+
+    def fold_message(i: int) -> None:
+        m = messages[i]
+        cur["end_index"] = i
+        cur["message_indices"].append(i)
+        cur["end_timestamp"] = getattr(m, "timestamp", None)
+
+        # track flags
+        content = getattr(getattr(m, "message", None), "content", None)
+        if _has_tool_activity(content):
+            cur["has_tooling"] = True
+        if _contains_todowrite(content):
+            cur["has_todo"] = True
+        if getattr(m, "type", "") != "system":
+            cur["all_system"] = False
+
+        # title: first meaningful user text; fallback to assistant
+        if cur.get("title") is None:
+            text = extract_text_content(content)
+            if getattr(m, "type", "") == "user" and text.strip():
+                cur["title"] = text.strip().splitlines()[0][:120]
+        if cur.get("title") is None and getattr(m, "type", "") == "assistant":
+            text = extract_text_content(content)
+            if text.strip():
+                cur["title"] = text.strip().splitlines()[0][:120]
+
+    def finalize_current_span() -> None:
+        # compute kind
+        kind: str
+        if cur["has_todo"]:
+            kind = "todo"
+        elif cur["has_tooling"]:
+            kind = "tooling"
+        elif cur["all_system"]:
+            kind = "system"
+        else:
+            kind = "chat"
+
+        span_id = f"{cur['session_id'] or 'span'}-{cur['start_index']}-{cur['end_index']}"
+
+        spans.append(
+            Span(
+                id=span_id,
+                title=cur.get("title"),
+                kind=kind,  # type: ignore[arg-type]
+                start_index=cur["start_index"],
+                end_index=cur["end_index"],
+                message_indices=list(cur["message_indices"]),
+                start_timestamp=cur.get("start_timestamp"),
+                end_timestamp=cur.get("end_timestamp"),
+                session_id=cur.get("session_id"),
+            )
+        )
+
+    # initialize with first message processed
+    fold_message(0)
+
+    for i in range(1, len(seq)):
+        prev_dt = get_dt(i - 1)
+        cur_dt = get_dt(i)
+        prev_sess = getattr(seq[i - 1], "sessionId", None)
+        cur_sess = getattr(seq[i], "sessionId", None)
+
+        boundary = False
+        if prev_sess != cur_sess:
+            boundary = True
+        elif prev_dt and cur_dt:
+            delta = (cur_dt - prev_dt).total_seconds()
+            if delta > gap_seconds:
+                boundary = True
+
+        if boundary:
+            finalize_current_span()
+            cur = start_new_span(i)
+            fold_message(i)
+        else:
+            fold_message(i)
+
+    # finalize last span
+    finalize_current_span()
+
+    return spans
 
 
 def load_transcript(

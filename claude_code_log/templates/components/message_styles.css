@@ -91,6 +91,15 @@
     border-right: #00000017 1px solid;
 }
 
+/* Span header styling */
+.span-header {
+    background-color: #f3f7ff;
+    border-left: 3px solid #3b82f6;
+}
+.span-header .header {
+    font-weight: 600;
+}
+
 .session-header .header {
     margin-bottom: 8px;
     font-size: 1.2em;

@@ -1,62 +1,62 @@
 {
   "version": "0.4.2",
   "cache_created": "2025-07-18T11:49:42.477146",
-  "last_updated": "2025-07-18T11:49:42.487092",
+  "last_updated": "2025-08-23T11:00:46.026857",
   "project_path": "test/test_data",
   "cached_files": {
     "system_model_change.jsonl": {
-      "file_path": "test/test_data/system_model_change.jsonl",
-      "source_mtime": 1751556007.8746295,
-      "cached_mtime": 1752835782.4781585,
+      "file_path": "/Users/mhuang/Documents/GitHub/claude-code-log/test/test_data/system_model_change.jsonl",
+      "source_mtime": 1755811982.5859876,
+      "cached_mtime": 1755961246.014319,
       "message_count": 1,
       "session_ids": [
         "4ed13788-7e10-46ed-8c14-a6c2f2457225"
       ]
     },
     "session_b.jsonl": {
-      "file_path": "test/test_data/session_b.jsonl",
-      "source_mtime": 1751556007.8748333,
-      "cached_mtime": 1752835782.4806166,
+      "file_path": "/Users/mhuang/Documents/GitHub/claude-code-log/test/test_data/session_b.jsonl",
+      "source_mtime": 1755811982.5857968,
+      "cached_mtime": 1755961246.0187497,
       "message_count": 3,
       "session_ids": [
         "session_b"
       ]
     },
     "representative_messages.jsonl": {
-      "file_path": "test/test_data/representative_messages.jsonl",
-      "source_mtime": 1751556007.8752434,
-      "cached_mtime": 1752835782.4818327,
+      "file_path": "/Users/mhuang/Documents/GitHub/claude-code-log/test/test_data/representative_messages.jsonl",
+      "source_mtime": 1755811982.5857313,
+      "cached_mtime": 1755961246.0202935,
       "message_count": 12,
       "session_ids": [
         "test_session"
       ]
     },
     "todowrite_examples.jsonl": {
-      "file_path": "test/test_data/todowrite_examples.jsonl",
-      "source_mtime": 1751556007.875755,
-      "cached_mtime": 1752835782.4832296,
+      "file_path": "/Users/mhuang/Documents/GitHub/claude-code-log/test/test_data/todowrite_examples.jsonl",
+      "source_mtime": 1755811982.586185,
+      "cached_mtime": 1755961246.0218165,
       "message_count": 12,
       "session_ids": [
         "todowrite_session"
       ]
     },
     "sidechain.jsonl": {
-      "file_path": "test/test_data/sidechain.jsonl",
-      "source_mtime": 1751556007.8762715,
-      "cached_mtime": 1752835782.4844983,
+      "file_path": "/Users/mhuang/Documents/GitHub/claude-code-log/test/test_data/sidechain.jsonl",
+      "source_mtime": 1755811982.5859165,
+      "cached_mtime": 1755961246.0233877,
       "message_count": 8,
       "session_ids": [
         "df749439-8556-41bf-9965-9f49cf38bf2a"
       ]
     },
     "edge_cases.jsonl": {
-      "file_path": "test/test_data/edge_cases.jsonl",
-      "source_mtime": 1751412850.5969663,
-      "cached_mtime": 1752835782.4860222,
+      "file_path": "/Users/mhuang/Documents/GitHub/claude-code-log/test/test_data/edge_cases.jsonl",
+      "source_mtime": 1755811982.5853803,
+      "cached_mtime": 1755961246.0257258,
       "message_count": 13,
       "session_ids": [
-        "todowrite_session",
-        "edge_cases"
+        "edge_cases",
+        "todowrite_session"
       ]
     }
   },
@@ -146,9 +146,9 @@
     }
   },
   "working_directories": [
-    "/Users/dain/workspace/document-processing",
     "/tmp",
-    "/Users/dain/workspace/claude-code-log"
+    "/Users/dain/workspace/claude-code-log",
+    "/Users/dain/workspace/document-processing"
   ],
   "earliest_timestamp": "2025-06-14T10:02:00Z",
   "latest_timestamp": "2025-07-03T16:10:07.875368Z"

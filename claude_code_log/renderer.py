@@ -25,6 +25,7 @@ from .models import (
     ImageContent,
 )
 from .parser import extract_text_content
+from .parser import group_messages_into_spans
 from .utils import (
     is_command_message,
     is_local_command_output,
@@ -476,6 +477,9 @@ class TemplateMessage:
         session_id: Optional[str] = None,
         is_session_header: bool = False,
         token_usage: Optional[str] = None,
+        is_span_header: bool = False,
+        span_id: Optional[str] = None,
+        span_title: Optional[str] = None,
     ):
         self.type = message_type
         self.content_html = content_html
@@ -487,6 +491,9 @@ class TemplateMessage:
         self.is_session_header = is_session_header
         self.session_subtitle: Optional[str] = None
         self.token_usage = token_usage
+        self.is_span_header = is_span_header
+        self.span_id = span_id
+        self.span_title = span_title
 
 
 class TemplateProject:
@@ -514,8 +521,8 @@ class TemplateProject:
             self.name, self.working_directories
         )
 
-        # Format last modified date
-        last_modified_dt = datetime.fromtimestamp(self.last_modified)
+        # Format last modified date in UTC for consistency across environments
+        last_modified_dt = datetime.utcfromtimestamp(self.last_modified)
         self.formatted_date = last_modified_dt.strftime("%Y-%m-%d %H:%M:%S")
 
         # Format interaction time range
@@ -1184,6 +1191,496 @@ def generate_html(
             sessions=session_nav,
             combined_transcript_link=combined_transcript_link,
             library_version=get_library_version(),
+            collapse_spans=False,
+        )
+    )
+
+
+def generate_html_grouped(
+    messages: List[TranscriptEntry],
+    title: Optional[str] = None,
+    combined_transcript_link: Optional[str] = None,
+) -> str:
+    """Generate HTML with logical span grouping. Default HTML remains unchanged elsewhere."""
+    if not title:
+        title = "Claude Transcript"
+
+    # Pre-process to find and attach session summaries (same as generate_html)
+    session_summaries: Dict[str, str] = {}
+    uuid_to_session: Dict[str, str] = {}
+    uuid_to_session_backup: Dict[str, str] = {}
+
+    for message in messages:
+        if hasattr(message, "uuid") and hasattr(message, "sessionId"):
+            message_uuid = getattr(message, "uuid", "")
+            session_id = getattr(message, "sessionId", "")
+            if message_uuid and session_id:
+                if type(message) is AssistantTranscriptEntry:
+                    uuid_to_session[message_uuid] = session_id
+                else:
+                    uuid_to_session_backup[message_uuid] = session_id
+
+    for message in messages:
+        if isinstance(message, SummaryTranscriptEntry):
+            leaf_uuid = message.leafUuid
+            if leaf_uuid in uuid_to_session:
+                session_summaries[uuid_to_session[leaf_uuid]] = message.summary
+            elif (
+                leaf_uuid in uuid_to_session_backup
+                and uuid_to_session_backup[leaf_uuid] not in session_summaries
+            ):
+                session_summaries[uuid_to_session_backup[leaf_uuid]] = message.summary
+
+    for message in messages:
+        if hasattr(message, "sessionId"):
+            session_id = getattr(message, "sessionId", "")
+            if session_id in session_summaries:
+                setattr(message, "_session_summary", session_summaries[session_id])
+
+    # Build non-summary sequence and index map for span placement
+    seq: List[TranscriptEntry] = [m for m in messages if not isinstance(m, SummaryTranscriptEntry)]
+    index_map: Dict[int, int] = {id(m): i for i, m in enumerate(seq)}
+    spans = group_messages_into_spans(messages)
+    span_starts: Dict[int, Any] = {sp.start_index: sp for sp in spans}
+
+    sessions: Dict[str, Dict[str, Any]] = {}
+    session_order: List[str] = []
+    seen_sessions: set[str] = set()
+    seen_request_ids: set[str] = set()
+    show_tokens_for_message: set[str] = set()
+
+    template_messages: List[TemplateMessage] = []
+
+    for message in messages:
+        message_type = message.type
+
+        if isinstance(message, SummaryTranscriptEntry):
+            continue
+
+        if isinstance(message, SystemTranscriptEntry):
+            session_id = getattr(message, "sessionId", "unknown")
+            timestamp = getattr(message, "timestamp", "")
+            formatted_timestamp = format_timestamp(timestamp) if timestamp else ""
+
+            level = getattr(message, "level", "info")
+            level_icon = {"warning": "⚠️", "error": "❌", "info": "ℹ️"}.get(level, "ℹ️")
+            level_css = f"system system-{level}"
+
+            escaped_content = escape_html(message.content)
+            content_html = f"<strong>{level_icon} System {level.title()}:</strong> {escaped_content}"
+
+            # Add span header if starting a new span at this message
+            seq_idx = index_map.get(id(message))
+            if seq_idx is not None and seq_idx in span_starts:
+                sp = span_starts[seq_idx]
+                span_header = TemplateMessage(
+                    message_type="span_header",
+                    content_html=sp.title or f"{sp.kind.title()} span",
+                    formatted_timestamp="",
+                    css_class="span-header",
+                    session_id=getattr(message, "sessionId", None),
+                    is_span_header=True,
+                    span_id=sp.id,
+                    span_title=sp.title,
+                )
+                template_messages.append(span_header)
+
+            system_template_message = TemplateMessage(
+                message_type=f"System {level.title()}",
+                content_html=content_html,
+                formatted_timestamp=formatted_timestamp,
+                css_class=level_css,
+                session_id=session_id,
+            )
+            template_messages.append(system_template_message)
+            continue
+
+        message_content = message.message.content  # type: ignore
+        text_content = extract_text_content(message_content)
+
+        tool_items: List[ContentItem] = []
+        text_only_content: Union[str, List[ContentItem]] = []
+
+        if isinstance(message_content, list):
+            text_only_items: List[ContentItem] = []
+            for item in message_content:
+                item_type = getattr(item, "type", None)
+                is_tool_item = isinstance(
+                    item,
+                    (ToolUseContent, ToolResultContent, ThinkingContent, ImageContent),
+                ) or item_type in ("tool_use", "tool_result", "thinking", "image")
+
+                if is_tool_item:
+                    tool_items.append(item)
+                else:
+                    text_only_items.append(item)
+            text_only_content = text_only_items
+        else:
+            text_only_content = message_content
+
+        if not text_content.strip() and not tool_items:
+            continue
+
+        if should_skip_message(text_content):
+            continue
+
+        is_command = is_command_message(text_content)
+        is_local_output = is_local_command_output(text_content)
+
+        session_id = getattr(message, "sessionId", "unknown")
+        session_summary = getattr(message, "_session_summary", None)
+
+        if session_id not in sessions:
+            current_session_summary = getattr(message, "_session_summary", None)
+            first_user_message = ""
+            if (
+                message_type == "user"
+                and hasattr(message, "message")
+                and should_use_as_session_starter(text_content)
+            ):
+                content = extract_text_content(message.message.content)
+                first_user_message = create_session_preview(content)
+
+            sessions[session_id] = {
+                "id": session_id,
+                "summary": current_session_summary,
+                "first_timestamp": getattr(message, "timestamp", ""),
+                "last_timestamp": getattr(message, "timestamp", ""),
+                "message_count": 0,
+                "first_user_message": first_user_message,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_cache_creation_tokens": 0,
+                "total_cache_read_tokens": 0,
+            }
+            session_order.append(session_id)
+
+            if session_id not in seen_sessions:
+                seen_sessions.add(session_id)
+                session_title = (
+                    f"{current_session_summary} • {session_id[:8]}"
+                    if current_session_summary
+                    else session_id[:8]
+                )
+
+                session_header = TemplateMessage(
+                    message_type="session_header",
+                    content_html=session_title,
+                    formatted_timestamp="",
+                    css_class="session-header",
+                    session_summary=current_session_summary,
+                    session_id=session_id,
+                    is_session_header=True,
+                )
+                template_messages.append(session_header)
+
+        elif message_type == "user" and not sessions[session_id]["first_user_message"]:
+            if hasattr(message, "message"):
+                first_user_content = extract_text_content(message.message.content)
+                if should_use_as_session_starter(first_user_content):
+                    sessions[session_id]["first_user_message"] = create_session_preview(
+                        first_user_content
+                    )
+
+        sessions[session_id]["message_count"] += 1
+
+        current_timestamp = getattr(message, "timestamp", "")
+        if current_timestamp:
+            sessions[session_id]["last_timestamp"] = current_timestamp
+
+        if message_type == "assistant" and hasattr(message, "message"):
+            assistant_message = getattr(message, "message")
+            request_id = getattr(message, "requestId", None)
+            message_uuid = getattr(message, "uuid", "")
+
+            if (
+                hasattr(assistant_message, "usage")
+                and assistant_message.usage
+                and request_id
+                and request_id not in seen_request_ids
+            ):
+                seen_request_ids.add(request_id)
+                show_tokens_for_message.add(message_uuid)
+
+                usage = assistant_message.usage
+                sessions[session_id]["total_input_tokens"] += usage.input_tokens
+                sessions[session_id]["total_output_tokens"] += usage.output_tokens
+                if usage.cache_creation_input_tokens:
+                    sessions[session_id]["total_cache_creation_tokens"] += (
+                        usage.cache_creation_input_tokens
+                    )
+                if usage.cache_read_input_tokens:
+                    sessions[session_id]["total_cache_read_tokens"] += (
+                        usage.cache_read_input_tokens
+                    )
+
+        timestamp = (
+            getattr(message, "timestamp", "") if hasattr(message, "timestamp") else ""
+        )
+        formatted_timestamp = format_timestamp(timestamp) if timestamp else ""
+
+        token_usage_str: Optional[str] = None
+        if message_type == "assistant" and hasattr(message, "message"):
+            assistant_message = getattr(message, "message")
+            message_uuid = getattr(message, "uuid", "")
+
+            if (
+                hasattr(assistant_message, "usage")
+                and assistant_message.usage
+                and message_uuid in show_tokens_for_message
+            ):
+                usage = assistant_message.usage
+                token_parts = [
+                    f"Input: {usage.input_tokens}",
+                    f"Output: {usage.output_tokens}",
+                ]
+                if usage.cache_creation_input_tokens:
+                    token_parts.append(
+                        f"Cache Creation: {usage.cache_creation_input_tokens}"
+                    )
+                if usage.cache_read_input_tokens:
+                    token_parts.append(f"Cache Read: {usage.cache_read_input_tokens}")
+                token_usage_str = " | ".join(token_parts)
+
+        # Insert span header if needed (after session header so span appears inside session)
+        seq_idx = index_map.get(id(message))
+        if seq_idx is not None and seq_idx in span_starts:
+            sp = span_starts[seq_idx]
+            span_header = TemplateMessage(
+                message_type="span",
+                content_html=sp.title or f"{sp.kind.title()} span",
+                formatted_timestamp="",
+                css_class="span-header",
+                session_id=getattr(message, "sessionId", None),
+                is_span_header=True,
+                span_id=sp.id,
+                span_title=sp.title,
+            )
+            span_header = TemplateMessage(
+                message_type="span",
+                content_html=sp.title or f"{sp.kind.title()} span",
+                formatted_timestamp="",
+                css_class="span-header",
+                session_id=getattr(message, "sessionId", None),
+                is_span_header=True,
+                span_id=sp.id,
+                span_title=sp.title,
+            )
+            template_messages.append(span_header)
+
+        if message_type == "summary":
+            css_class = "summary"
+            summary_text = (
+                message.summary if isinstance(message, SummaryTranscriptEntry) else "Summary"
+            )
+            content_html = f"<strong>Summary:</strong> {escape_html(str(summary_text))}"
+        elif is_command:
+            css_class = "system"
+            command_name, command_args, command_contents = extract_command_info(
+                text_content
+            )
+            escaped_command_name = escape_html(command_name)
+            escaped_command_args = escape_html(command_args)
+
+            formatted_contents = command_contents.replace("\\n", "\n")
+            escaped_command_contents = escape_html(formatted_contents)
+
+            content_parts: List[str] = [
+                f"<strong>Command:</strong> {escaped_command_name}"
+            ]
+            if command_args:
+                content_parts.append(f"<strong>Args:</strong> {escaped_command_args}")
+            if command_contents:
+                details_html = create_collapsible_details(
+                    "Content", escaped_command_contents
+                )
+                content_parts.append(details_html)
+
+            content_html = "<br>".join(content_parts)
+            message_type = "system"
+        elif is_local_output:
+            css_class = "system"
+            import re
+
+            stdout_match = re.search(
+                r"<local-command-stdout>(.*?)</local-command-stdout>",
+                text_content,
+                re.DOTALL,
+            )
+            if stdout_match:
+                stdout_content = stdout_match.group(1).strip()
+                escaped_stdout = escape_html(stdout_content)
+                content_html = f"<strong>Command Output:</strong><br><div class='content'>{escaped_stdout}</div>"
+            else:
+                content_html = escape_html(text_content)
+            message_type = "system"
+        else:
+            css_class = f"{message_type}"
+            content_html = render_message_content(text_only_content, message_type)
+            if getattr(message, "isSidechain", False):
+                css_class = f"{message_type} sidechain"
+                message_type = (
+                    "📝 Sub-assistant prompt" if message_type == "user" else "🔗 Sub-assistant"
+                )
+
+        if text_only_content and (
+            isinstance(text_only_content, str)
+            and text_only_content.strip()
+            or isinstance(text_only_content, list)
+            and text_only_content
+        ):
+            template_message = TemplateMessage(
+                message_type=message_type,
+                content_html=content_html,
+                formatted_timestamp=formatted_timestamp,
+                css_class=css_class,
+                session_summary=session_summary,
+                session_id=session_id,
+                token_usage=token_usage_str,
+            )
+            template_messages.append(template_message)
+
+        for tool_item in tool_items:
+            tool_timestamp = getattr(message, "timestamp", "")
+            tool_formatted_timestamp = (
+                format_timestamp(tool_timestamp) if tool_timestamp else ""
+            )
+
+            item_type = getattr(tool_item, "type", None)
+
+            if isinstance(tool_item, ToolUseContent) or item_type == "tool_use":
+                if not isinstance(tool_item, ToolUseContent):
+                    tool_use_converted = ToolUseContent(
+                        type="tool_use",
+                        id=getattr(tool_item, "id", ""),
+                        name=getattr(tool_item, "name", ""),
+                        input=getattr(tool_item, "input", {}),
+                    )
+                else:
+                    tool_use_converted = tool_item
+
+                tool_content_html = format_tool_use_content(tool_use_converted)
+                escaped_name = escape_html(tool_use_converted.name)
+                escaped_id = escape_html(tool_use_converted.id)
+                if tool_use_converted.name == "TodoWrite":
+                    tool_message_type = f"📝 Todo List (ID: {escaped_id})"
+                else:
+                    tool_message_type = f"Tool Use: {escaped_name} (ID: {escaped_id})"
+                tool_css_class = "tool_use"
+            elif isinstance(tool_item, ToolResultContent) or item_type == "tool_result":
+                if not isinstance(tool_item, ToolResultContent):
+                    tool_result_converted = ToolResultContent(
+                        type="tool_result",
+                        tool_use_id=getattr(tool_item, "tool_use_id", ""),
+                        content=getattr(tool_item, "content", ""),
+                        is_error=getattr(tool_item, "is_error", False),
+                    )
+                else:
+                    tool_result_converted = tool_item
+
+                tool_content_html = format_tool_result_content(tool_result_converted)
+                escaped_id = escape_html(tool_result_converted.tool_use_id)
+                error_indicator = (
+                    " (🚨 Error)" if tool_result_converted.is_error else ""
+                )
+                tool_message_type = f"Tool Result{error_indicator}: {escaped_id}"
+                tool_css_class = "tool_result"
+            elif isinstance(tool_item, ThinkingContent) or item_type == "thinking":
+                if not isinstance(tool_item, ThinkingContent):
+                    thinking_converted = ThinkingContent(
+                        type="thinking", thinking=getattr(tool_item, "thinking", str(tool_item))
+                    )
+                else:
+                    thinking_converted = tool_item
+
+                tool_content_html = format_thinking_content(thinking_converted)
+                tool_message_type = "Thinking"
+                tool_css_class = "thinking"
+            elif isinstance(tool_item, ImageContent) or item_type == "image":
+                if not isinstance(tool_item, ImageContent):
+                    continue
+                else:
+                    tool_content_html = format_image_content(tool_item)
+                tool_message_type = "Image"
+                tool_css_class = "image"
+            else:
+                tool_content_html = (
+                    f"<p>Unknown content type: {escape_html(str(type(tool_item)))}</p>"
+                )
+                tool_message_type = "Unknown Content"
+                tool_css_class = "unknown"
+
+            if getattr(message, "isSidechain", False):
+                tool_css_class += " sidechain"
+
+            tool_template_message = TemplateMessage(
+                message_type=tool_message_type,
+                content_html=tool_content_html,
+                formatted_timestamp=tool_formatted_timestamp,
+                css_class=tool_css_class,
+                session_summary=session_summary,
+                session_id=session_id,
+            )
+            template_messages.append(tool_template_message)
+
+    session_nav: List[Dict[str, Any]] = []
+    for session_id in session_order:
+        session_info = sessions[session_id]
+
+        first_ts = session_info["first_timestamp"]
+        last_ts = session_info["last_timestamp"]
+        timestamp_range = ""
+        if first_ts and last_ts:
+            if first_ts == last_ts:
+                timestamp_range = format_timestamp(first_ts)
+            else:
+                timestamp_range = (
+                    f"{format_timestamp(first_ts)} - {format_timestamp(last_ts)}"
+                )
+        elif first_ts:
+            timestamp_range = format_timestamp(first_ts)
+
+        token_summary = ""
+        total_input = session_info["total_input_tokens"]
+        total_output = session_info["total_output_tokens"]
+        total_cache_creation = session_info["total_cache_creation_tokens"]
+        total_cache_read = session_info["total_cache_read_tokens"]
+
+        if total_input > 0 or total_output > 0:
+            token_parts: List[str] = []
+            if total_input > 0:
+                token_parts.append(f"Input: {total_input}")
+            if total_output > 0:
+                token_parts.append(f"Output: {total_output}")
+            if total_cache_creation > 0:
+                token_parts.append(f"Cache Creation: {total_cache_creation}")
+            if total_cache_read > 0:
+                token_parts.append(f"Cache Read: {total_cache_read}")
+            token_summary = "Token usage – " + " | ".join(token_parts)
+
+        session_nav.append(
+            {
+                "id": session_id,
+                "summary": session_info["summary"],
+                "timestamp_range": timestamp_range,
+                "message_count": session_info["message_count"],
+                "first_user_message": session_info["first_user_message"]
+                if session_info["first_user_message"] != ""
+                else "[No user message found in session.]",
+                "token_summary": token_summary,
+            }
+        )
+
+    env = _get_template_environment()
+    template = env.get_template("transcript.html")
+    return str(
+        template.render(
+            title=title,
+            messages=template_messages,
+            sessions=session_nav,
+            combined_transcript_link=combined_transcript_link,
+            library_version=get_library_version(),
+            collapse_spans=True,
         )
     )
 

@@ -27,6 +27,7 @@ from .models import (
 )
 from .renderer import (
     generate_html,
+    generate_html_grouped,
     generate_session_html,
     generate_projects_index_html,
     is_html_outdated,
@@ -42,6 +43,9 @@ def convert_jsonl_to_html(
     generate_individual_sessions: bool = True,
     use_cache: bool = True,
     silent: bool = False,
+    group_spans: bool = False,
+    group_gap_seconds: int = 600,
+    collapse_spans: bool = False,
 ) -> Path:
     """Convert JSONL transcript(s) to HTML file(s)."""
     if not input_path.exists():
@@ -104,7 +108,11 @@ def convert_jsonl_to_html(
     )
 
     if should_regenerate:
-        html_content = generate_html(messages, title)
+        if group_spans:
+            # Pass grouping preferences via title suffix for now (UI collapse handled client-side)
+            html_content = generate_html_grouped(messages, title)
+        else:
+            html_content = generate_html(messages, title)
         output_path.write_text(html_content, encoding="utf-8")
     else:
         print(f"HTML file {output_path.name} is current, skipping regeneration")

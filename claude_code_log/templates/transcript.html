@@ -74,10 +74,9 @@
     {% else %}
     <div class='message {{ message.css_class }}'>
         <div class='header'>
-            <span>{% if message.css_class == 'user' %}🤷 {% elif message.css_class == 'assistant' %}🤖 {% elif
-                message.css_class == 'system' %}⚙️ {% elif message.css_class == 'tool_use' %}🛠️ {% elif
-                message.css_class == 'tool_result' %}🧰 {% elif message.css_class == 'thinking' %}💭 {% elif
-                message.css_class == 'image' %}🖼️ {% endif %}{{ message.display_type }}</span>
+            <span>
+                {% if message.css_class == 'user' %}🤷 {% elif message.css_class == 'assistant' %}🤖 {% elif message.css_class == 'system' %}⚙️ {% elif message.css_class == 'tool_use' %}🛠️ {% elif message.css_class == 'tool_result' %}🧰 {% elif message.css_class == 'thinking' %}💭 {% elif message.css_class == 'image' %}🖼️ {% elif message.css_class == 'span-header' %}🧩 {% endif %}{{ message.display_type }}
+            </span>
             <div style='display: flex; flex-direction: column; align-items: flex-end; gap: 2px;'>
                 <span class='timestamp'>{{ message.formatted_timestamp }}</span>
                 {% if message.token_usage %}
@@ -292,6 +291,16 @@
             // Initialize button state and message counts
             updateToggleButton();
             updateMessageCounts();
+
+            // If grouping is enabled and spans should start collapsed, close all details by default
+            try {
+                const collapseSpans = {{ 'true' if collapse_spans else 'false' }};
+                if (collapseSpans) {
+                    const allDetails = document.querySelectorAll('details.collapsible-details');
+                    allDetails.forEach(details => details.removeAttribute('open'));
+                    updateToggleButton();
+                }
+            } catch (e) {}
         });
     </script>
 </body>

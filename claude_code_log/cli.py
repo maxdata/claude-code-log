@@ -352,6 +352,25 @@ def _clear_html_files(input_path: Path, all_projects: bool) -> None:
     is_flag=True,
     help="Launch interactive TUI for session browsing and management",
 )
+@click.option(
+    "--group",
+    "group_spans",
+    is_flag=True,
+    help="Group messages into logical spans for readability (experimental)",
+)
+@click.option(
+    "--group-gap",
+    "group_gap_seconds",
+    type=int,
+    default=600,
+    show_default=True,
+    help="Gap in seconds to start a new span when grouping is enabled",
+)
+@click.option(
+    "--collapse-spans",
+    is_flag=True,
+    help="When grouping is enabled, collapse spans by default in the UI",
+)
 def main(
     input_path: Optional[Path],
     output: Optional[Path],
@@ -364,6 +383,9 @@ def main(
     clear_cache: bool,
     clear_html: bool,
     tui: bool,
+    group_spans: bool,
+    group_gap_seconds: int,
+    collapse_spans: bool,
 ) -> None:
     """Convert Claude transcript JSONL files to HTML.
 
@@ -545,6 +567,10 @@ def main(
             to_date,
             not no_individual_sessions,
             not no_cache,
+            False,
+            group_spans,
+            group_gap_seconds,
+            collapse_spans,
         )
         if input_path.is_file():
             click.echo(f"Successfully converted {input_path} to {output_path}")
