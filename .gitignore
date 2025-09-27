@@ -179,3 +179,5 @@ test_output
 test/test_data/*.html
 .claude-trace
 .specstory
+
+data/
