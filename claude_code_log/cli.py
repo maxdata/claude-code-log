@@ -352,6 +352,23 @@ def _clear_html_files(input_path: Path, all_projects: bool) -> None:
     is_flag=True,
     help="Launch interactive TUI for session browsing and management",
 )
+@click.option(
+    "--server",
+    is_flag=True,
+    help="Launch FastAPI server for web interface",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=8000,
+    help="Port for the web server (default: 8000)",
+)
+@click.option(
+    "--host",
+    type=str,
+    default="127.0.0.1",
+    help="Host for the web server (default: 127.0.0.1)",
+)
 def main(
     input_path: Optional[Path],
     output: Optional[Path],
@@ -364,6 +381,9 @@ def main(
     clear_cache: bool,
     clear_html: bool,
     tui: bool,
+    server: bool,
+    port: int,
+    host: str,
 ) -> None:
     """Convert Claude transcript JSONL files to HTML.
 
@@ -371,6 +391,25 @@ def main(
     """
     # Configure logging to show warnings and above
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+
+    # Handle server mode
+    if server:
+        click.echo(f"Starting FastAPI server on {host}:{port}")
+        click.echo("Access the web interface at: http://{host}:{port}")
+
+        try:
+            import uvicorn
+            from .server import app
+
+            uvicorn.run(app, host=host, port=port)
+        except ImportError:
+            click.echo("Error: uvicorn and fastapi are required for server mode")
+            click.echo("Install with: pip install fastapi uvicorn")
+            sys.exit(1)
+        except Exception as e:
+            click.echo(f"Error starting server: {e}")
+            sys.exit(1)
+        return
 
     try:
         # Handle TUI mode

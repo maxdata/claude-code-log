@@ -1,0 +1,37 @@
+{
+  "name": "claude-code-log-svelte-viewer",
+  "version": "0.1.0",
+  "description": "Svelte-based viewer for Claude Code transcripts",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "lint": "prettier --check . && eslint .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-auto": "^3.2.5",
+    "@sveltejs/kit": "^2.8.5",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@types/marked": "^6.0.0",
+    "eslint": "^9.15.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-svelte": "^2.45.1",
+    "prettier": "^3.3.3",
+    "prettier-plugin-svelte": "^3.2.8",
+    "svelte": "^5.2.7",
+    "svelte-check": "^4.0.8",
+    "tslib": "^2.8.1",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.1"
+  },
+  "dependencies": {
+    "@sveltejs/adapter-static": "^3.0.9",
+    "date-fns": "^4.1.0",
+    "highlight.js": "^11.10.0",
+    "marked": "^14.1.3"
+  }
+}
